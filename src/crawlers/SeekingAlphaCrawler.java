@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import org.openqa.selenium.By;
 import org.openqa.selenium.ElementNotVisibleException;
 import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.firefox.FirefoxBinary;
@@ -35,6 +36,7 @@ public class SeekingAlphaCrawler {
 
   // Files that save the crawled data
   public static String File_CrawlHistory = "./datas/Crawl-History";
+  public static String File_EmptyDates = "./datas/Empty-Dates";
   public static String File_Prefix_DailyNews = "./datas/News-Daily-";
   
   public WebDriver webDriver;
@@ -57,6 +59,15 @@ public class SeekingAlphaCrawler {
         crawled_history.add(line);
       }
       reader.close();
+      fin = new File(File_EmptyDates);
+      if (fin.exists() == false) return;
+      reader = new BufferedReader(new InputStreamReader(new FileInputStream(fin), "UTF-8"));
+      while (true) {
+        String line = reader.readLine();
+        if (line == null) break;
+        crawled_history.add(line);
+      }
+      reader.close();
     } catch (IOException e) {
       e.printStackTrace();
     }
@@ -64,16 +75,14 @@ public class SeekingAlphaCrawler {
   
   public void start() {
     File pathToBinary = new File(Firefox_Exe_Location);
-    FirefoxBinary ffBinary = new FirefoxBinary(pathToBinary);
-    FirefoxProfile firefoxProfile = new FirefoxProfile();       
-    webDriver = new FirefoxDriver( ffBinary, firefoxProfile );
+    FirefoxBinary firefoxBinary = new FirefoxBinary(pathToBinary);
+    FirefoxProfile firefoxProfile = new FirefoxProfile();
+    webDriver = new FirefoxDriver(firefoxBinary, firefoxProfile);
     webDriver.manage().timeouts().implicitlyWait(60, TimeUnit.SECONDS);
     //webDriver.manage().timeouts().pageLoadTimeout(60, TimeUnit.SECONDS);
     //webDriver.manage().timeouts().setScriptTimeout(60, TimeUnit.SECONDS);
-    System.out.println(1);
     webDriver.get("http://www.ifeng.com/");
     String firstWindowHandler = webDriver.getWindowHandle();
-    System.out.println(2);
     
     Calendar currentDate = Calendar.getInstance();
     Calendar startDate = Calendar.getInstance();
@@ -107,16 +116,22 @@ public class SeekingAlphaCrawler {
   
   
   public void crawlOneDate(Calendar targetDate) {
-    System.out.println("crawling date : " + targetDate.getTime());
+    System.out.println("Begin crawl news of date: " + targetDate.getTime());
     try {
-      WebElement mc_right_menu = webDriver.findElement(By.id("mc_right_menu"));
+      //------------------click and show calendar box------------------------
+      //WebElement mc_right_menu = webDriver.findElement(By.id("mc_right_menu"));
+      WebElement mc_right_menu = webDriver.findElement(
+          By.xpath("html/body/div[1]/div[2]/div/div[1]/div[1]/div[@id=\"mc_right_menu\"]"));
       mc_right_menu.click();
       
-      WebElement news_data_selector = webDriver.findElement(By.className("news_date_selector"));
+      //WebElement news_data_selector = webDriver.findElement(By.className("news_date_selector"));
+      WebElement news_data_selector = mc_right_menu.findElement(By.className("news_date_selector"));
       news_data_selector.click();
       
-      WebElement market_calendar = webDriver.findElement(By.id("market_calendar_bottom"));
+      WebElement market_calendar = mc_right_menu.findElement(By.id("market_calendar_bottom"));
+      //------------------click and show calendar box------------------------
       
+      //------------------choose target date in calendar box-----------------
       WebElement current_month = null;
       WebElement previous_month = null;
       Calendar current_date = Calendar.getInstance();
@@ -137,12 +152,12 @@ public class SeekingAlphaCrawler {
       List<WebElement> days_of_month = market_calendar_bottom.findElements(By.className("day"));
       WebElement day_of_month = null;
       for (WebElement day : days_of_month) {
-        System.out.println(day.getText());
         if (day.getText().equals("" + targetDate.get(Calendar.DAY_OF_MONTH)))
           day_of_month = day;
       }
       assert(day_of_month != null);
       day_of_month.click();
+      //------------------choose target date in calendar box-----------------
       
       // TODO refreshed page will not appear immediately after click, thread sleep is not a good idea
       //      because it may fail for some cases.
@@ -152,14 +167,20 @@ public class SeekingAlphaCrawler {
         e.printStackTrace();
       }
       
-      WebElement market_currents_list = webDriver.findElement(By.className("market_currents_list"));
+      //WebElement market_currents_list = webDriver.findElement(By.className("market_currents_list"));
+      WebElement market_currents_list = webDriver.findElement(By.xpath("html/body/div[1]/div[2]/div/div[1]/ul"));
+      List<WebElement> empty_page_messages = market_currents_list.findElements(By.className("empty_page_messages"));
+      if (empty_page_messages.size() > 0) {
+        writeEmptyDate(targetDate);
+        return;
+      }
       WebElement h4 = market_currents_list.findElement(By.tagName("h4"));
       // check whether loaded
       System.out.println(h4.getText());
       if (h4.getText().indexOf(
           targetDate.get(Calendar.DAY_OF_MONTH) + ", " + targetDate.get(Calendar.YEAR)) < 0)
         return;
-      List<WebElement> mc_list_lis = webDriver.findElements(By.className("mc_list_li"));
+      List<WebElement> mc_list_lis = market_currents_list.findElements(By.className("mc_list_li"));
       
       writeCrawledDataToFile(mc_list_lis, targetDate);
       
@@ -169,9 +190,27 @@ public class SeekingAlphaCrawler {
       e.printStackTrace();
     } catch (ElementNotVisibleException e) {
       e.printStackTrace();
+    } catch (StaleElementReferenceException e) {
+      e.printStackTrace();
     }
   }
   
+  // There are days with no posts. Record them in file 
+  public void writeEmptyDate(Calendar targetDate) {
+    String date = targetDate.get(Calendar.YEAR) + "-" + targetDate.get(Calendar.MONTH) +
+        "-" + targetDate.get(Calendar.DAY_OF_MONTH);
+    try {
+      File fout = new File(File_EmptyDates);
+      BufferedWriter writer = new BufferedWriter(
+               new OutputStreamWriter(new FileOutputStream(fout, true), "UTF-8"));
+      writer.write(date + "\n");
+      crawled_history.add(date);
+      writer.flush();
+      writer.close();
+     } catch ( IOException e ) {
+      e.printStackTrace();
+     }
+  }
   public void writeCrawledDataToFile(List<WebElement> mc_lists_lis, Calendar targetDate) {
     // write news
     String date = targetDate.get(Calendar.YEAR) + "-" + targetDate.get(Calendar.MONTH) +
