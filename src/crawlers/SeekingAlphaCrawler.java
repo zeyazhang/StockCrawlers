@@ -8,14 +8,20 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.openqa.selenium.By;
 import org.openqa.selenium.ElementNotVisibleException;
+import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.StaleElementReferenceException;
 import org.openqa.selenium.WebDriver;
@@ -24,20 +30,26 @@ import org.openqa.selenium.firefox.FirefoxBinary;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxProfile;
 
+/*
+ * This crawler crawls all history news from seekingalpha.com.
+ * The method is:
+ * 1. Open seekingalpha.com;
+ * 2. Click drop down button "LATEST", click "Other Date" and the page will show a calendar menu;
+ * 3. Choose one certain date in calendar menu;
+ * 4. Record the news on that day.
+ */
 public class SeekingAlphaCrawler {
   // Crawl control
-  public static String StartDate = "2016-9-1";
+  public static String StartDate = "2012-9-1";
   public static String EndDate = "2016-10-31";
   public static String[] Months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-  public static String SeekingAlphaUrl = "http://seekingalpha.com/market-news/top-news";
-  // location of firefox 46.0 release
-  public static String Firefox_Exe_Location = "D:\\Program Files\\firefox-sdk\\bin\\firefox.exe";
+  public static String SeekingAlphaUrl = "http://seekingalpha.com/market-news/all";
 
   // Files that save the crawled data
-  public static String File_CrawlHistory = "./datas/Crawl-History";
-  public static String File_EmptyDates = "./datas/Empty-Dates";
-  public static String File_Prefix_DailyNews = "./datas/News-Daily-";
+  public static String File_CrawlHistory = "./datas/1-Crawl-History";
+  public static String File_EmptyDates = "./datas/1-Empty-Dates";
+  public static String File_Prefix_DailyNews = "./datas/1-ALL-News-Daily-";
   
   public WebDriver webDriver;
   public HashMap<String, Integer> monthToId;
@@ -74,7 +86,7 @@ public class SeekingAlphaCrawler {
   }
   
   public void start() {
-    File pathToBinary = new File(Firefox_Exe_Location);
+    File pathToBinary = new File(CrawlerConstants.Firefox_Exe_Location);
     FirefoxBinary firefoxBinary = new FirefoxBinary(pathToBinary);
     FirefoxProfile firefoxProfile = new FirefoxProfile();
     webDriver = new FirefoxDriver(firefoxBinary, firefoxProfile);
@@ -96,12 +108,13 @@ public class SeekingAlphaCrawler {
                   Integer.parseInt(time_terms[2]));
 
     while (currentDate.compareTo(startDate) > 0) {
-      String date = currentDate.get(Calendar.YEAR) + "-" + currentDate.get(Calendar.MONTH) +
+      String date = currentDate.get(Calendar.YEAR) + "-" + (currentDate.get(Calendar.MONTH) + 1) +
           "-" + currentDate.get(Calendar.DAY_OF_MONTH);
       if (crawled_history.contains(date)) {
         currentDate.add(Calendar.DATE, -1);
         continue;
       }
+      long startMili = System.currentTimeMillis();
       webDriver.get(SeekingAlphaUrl);
       crawlOneDate(currentDate);
       currentDate.add(Calendar.DATE, -1);
@@ -110,6 +123,8 @@ public class SeekingAlphaCrawler {
           webDriver.switchTo().window(handle);
           webDriver.close();
         }
+      long finishMili = System.currentTimeMillis();
+      System.out.println("Time consumed : " + ((finishMili - startMili) / 1000.0 / 60.0) + " minutes.");
     }
     webDriver.quit();
   }
@@ -167,6 +182,17 @@ public class SeekingAlphaCrawler {
         e.printStackTrace();
       }
       
+      try {
+      	for (int i = 0; i < 5; ++i) {
+          //Scroll down to see more news.
+          JavascriptExecutor jse = (JavascriptExecutor) webDriver;
+          jse.executeScript("window.scrollTo(0,document.body.scrollHeight);");
+        	Thread.sleep(1500);
+      	}
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
+      
       //WebElement market_currents_list = webDriver.findElement(By.className("market_currents_list"));
       WebElement market_currents_list = webDriver.findElement(By.xpath("html/body/div[1]/div[2]/div/div[1]/ul"));
       List<WebElement> empty_page_messages = market_currents_list.findElements(By.className("empty_page_messages"));
@@ -197,7 +223,7 @@ public class SeekingAlphaCrawler {
   
   // There are days with no posts. Record them in file 
   public void writeEmptyDate(Calendar targetDate) {
-    String date = targetDate.get(Calendar.YEAR) + "-" + targetDate.get(Calendar.MONTH) +
+    String date = targetDate.get(Calendar.YEAR) + "-" + (targetDate.get(Calendar.MONTH) + 1) +
         "-" + targetDate.get(Calendar.DAY_OF_MONTH);
     try {
       File fout = new File(File_EmptyDates);
@@ -212,24 +238,44 @@ public class SeekingAlphaCrawler {
      }
   }
   public void writeCrawledDataToFile(List<WebElement> mc_lists_lis, Calendar targetDate) {
+  	System.out.println("News List : " + mc_lists_lis.size());
+//  	int loop = 0;
+//  	for (WebElement mc_list_li : mc_lists_lis) {
+//  		System.out.println("Loop : " + loop);
+//  		loop++;
+//  		String line = "";
+//  		try {
+//  			WebElement mc_list_tickers = mc_list_li.findElement(By.className("mc_list_tickers"));
+//  			line = mc_list_tickers.getText().trim();
+//  			List<WebElement> titles = mc_list_li.findElements(By.className("mc_bullets_title"));
+//  			if (titles.size() == 0) {
+//  				line = line + "\t";
+//  			} else {
+//  				line = line + "\t" + titles.get(0).getText().trim();
+//  			}
+//  			List<WebElement> contents = mc_list_li.findElements(By.className("general_summary"));
+//  			if (contents.size() == 0) continue;
+//  				line = line + "\t" + contents.get(0).getText().trim();
+//  		} catch (StaleElementReferenceException e) {
+//  			continue;
+//  		}
+//  		line = line.replaceAll("\n", "\\n");
+//  		output = output + line + "\n";
+//  		System.out.println(line);
+//  	}
+  	
+  	Document document = Jsoup.parse(webDriver.getPageSource());
+  	List<String> news =  parseNewsList(document);
     // write news
-    String date = targetDate.get(Calendar.YEAR) + "-" + targetDate.get(Calendar.MONTH) +
+    String date = targetDate.get(Calendar.YEAR) + "-" + (targetDate.get(Calendar.MONTH) + 1) +
         "-" + targetDate.get(Calendar.DAY_OF_MONTH);
     try {
       File fout = new File(File_Prefix_DailyNews + date);
       BufferedWriter writer = new BufferedWriter(
                new OutputStreamWriter(new FileOutputStream(fout, true), "UTF-8"));
-      for (WebElement mc_list_li : mc_lists_lis) {
-        WebElement mc_list_tickers = mc_list_li.findElement(By.className("mc_list_tickers"));
-        //WebElement title = mc_list_li.findElement(By.className("mc_bullets_title mc_summaries_title_link"));
-        //WebElement content = mc_list_li.findElement(By.className("general_summary light_text bullets"));
-        WebElement title = mc_list_li.findElement(By.className("mc_bullets_title"));
-        WebElement content = mc_list_li.findElement(By.className("general_summary"));
-        if (mc_list_li == null || title == null || content == null) continue;
-        String line = mc_list_tickers.getText().trim() + "\t" + title.getText().trim() + "\t" + 
-            content.getText().trim();
-        line = line.replaceAll("\n", "\\n");
-        writer.write(line + "\n");
+      for (String line : news) {
+      	writer.write(line);
+      	writer.write("\n");
       }
       writer.flush();
       writer.close();
@@ -249,6 +295,36 @@ public class SeekingAlphaCrawler {
     } catch ( IOException e ) {
       e.printStackTrace();
     }
+  }
+  
+  public List<String> parseNewsList(Document document) {
+  	List<String> ret = new ArrayList<String>();
+  	Elements mc_list_lis = document.body().getElementsByClass("mc_list_li");
+  	System.out.println("Size of news : " + mc_list_lis.size());
+  	for (int i = 0; i < mc_list_lis.size(); ++i) {
+  		Element mc_list_li = mc_list_lis.get(i);
+  		Elements mc_list_trickers = mc_list_li.getElementsByClass("mc_list_tickers");
+  		Elements titles = mc_list_li.getElementsByClass("mc_bullets_title");
+  		Elements contents = mc_list_li.getElementsByClass("general_summary");
+  		if (mc_list_trickers.size() <= 0 || contents.size() == 0) continue;
+  		String stockSymble = mc_list_trickers.get(0).text();
+  		stockSymble = stockSymble.replaceAll(" ", " ").trim();
+  		if (stockSymble.equals("")) continue;
+  		StringBuilder news = new StringBuilder();
+  		news.append(stockSymble);
+  		if (titles.size() == 0) {
+  			news.append("\t");
+  		} else {
+  			news.append("\t");
+  			news.append(titles.get(0).text().trim());
+  		}
+  		news.append("\t");
+  		news.append(contents.get(0).text().trim());
+  		String line = news.toString().replaceAll("\n", "\\n");
+  		ret.add(line);
+  	}
+  	System.out.println("Size of news with Stock Symble : " + ret.size());
+  	return ret;
   }
 
   public static void main(String[] args) {
